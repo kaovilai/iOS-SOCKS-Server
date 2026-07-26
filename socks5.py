@@ -14,21 +14,37 @@ from lib.status import StatusMonitor
 
 logging.basicConfig(level=logging.ERROR)
 
-# IP over which the proxy will be available (probably WiFi IP)
+## Configuration
+"""
+Typical modes of operation:
+- If you have a VPN turned on and want to send traffic via the VPN, set USE_PHONE_VPN = True, USE_SYSTEM_DNS = True.
+  Otherwise, set USE_PHONE_VPN = False and USE_SYSTEM_DNS = False.
+- If you are using tethering, connect all clients to the hotspot and set PROXY_HOST = "172.20.10.1".
+- If you are connecting this phone and clients to some other WiFi network, set PROXY_HOST to this phone's address
+  on that WiFi network and set USE_SYSTEM_DNS = False.
+"""
+
+# IP over which the proxy will be available (default: iOS tethering IP; set to a WiFi IP address if this will be accessed over WiFi)
 PROXY_HOST = "172.20.10.1"
-# IP over which the proxy will attempt to connect to the Internet
+# IP over which the proxy will attempt to connect to the Internet (will be autodetected from available networks)
 CONNECT_HOST_IPV4 = "0.0.0.0"
 CONNECT_HOST_IPV6 = None
 # Time out connections after being idle for this long (in seconds)
 IDLE_TIMEOUT = 1800
-
+# Host to listen on - 0.0.0.0 to listen on all interfaces
 LISTEN_HOST = "0.0.0.0"
-SOCKS_PORT = 9876
-HTTP_PORT = 9877
-WPAD_PORT = 8088
+# Port numbers to listen on
+SOCKS_PORT = 9876 # SOCKS5 server
+HTTP_PORT = 9877 # HTTP Proxy server
+WPAD_PORT = 8088 # WPAD proxy autodiscovery server
 
 USE_PHONE_VPN = True
+# VPNs tend to ship their own DNS resolvers; since iOS will send all traffic
+# via the VPN by default, we can trust the system DNS if using the phone VPN.
+USE_SYSTEM_DNS = USE_PHONE_VPN
 CUSTOM_RESOLVERS = []
+
+## End of configuration
 
 # Try to keep the screen from turning off (iOS)
 try:
@@ -66,16 +82,19 @@ DEFAULT_RESOLVERS = [
     "2001:4860:4860::8844",
 ]
 
-try:
-    # TODO: configurable DNS (or find a way to use the cell network's own DNS)
-    import dns.asyncresolver
-
-    resolver = dns.asyncresolver.Resolver(configure=False)
-    resolver.nameservers += CUSTOM_RESOLVERS or DEFAULT_RESOLVERS
-except ImportError:
-    # pip install dnspython
-    print("Warning: dnspython not available; falling back to system DNS")
+if USE_SYSTEM_DNS:
     resolver = None
+else:
+    try:
+        # TODO: configurable DNS (or find a way to use the cell network's own DNS)
+        from dns import asyncresolver
+
+        resolver = asyncresolver.Resolver(configure=False)
+        resolver.nameservers += CUSTOM_RESOLVERS or DEFAULT_RESOLVERS
+    except ImportError:
+        # pip install dnspython
+        print("Warning: dnspython not available; falling back to system DNS")
+        resolver = None
 
 try:
     # We want the WiFi address so that clients know what IP to use.
