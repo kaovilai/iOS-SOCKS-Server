@@ -11,6 +11,18 @@ A simple HTTP/SOCKS proxy designed to run on Pythonista on iOS, letting you fake
 - Open Pythonista, navigate to iCloud, `iOS-SOCKS-Server` and open the `socks5.py` script.
 - Optionally, you can tap on the wrench and select `Shortcuts...` to add the script to your home screen. 
 
+# Configuration
+
+The proxy can be used in a few different configurations, and you may need to update the configuration block at the top of `socks5.py` to suit your needs.
+
+If you want to connect your phone to a VPN, and tunnel all proxied traffic through that VPN, set `USE_PHONE_VPN = True` and `USE_SYSTEM_DNS = True`. Otherwise, set `USE_PHONE_VPN = False`.
+
+For connectivity, you have a few options:
+
+- If you are able to enable tethering, this is the simplest option. Turn on tethering, connect all your devices to the hotspot, and configure them to use the proxy (see below for platform-specific instructions). Set `PROXY_HOST = "172.20.10.1"` (the default).
+- You can connect all devices (phone + clients) to the same WiFi network. Set `PROXY_HOST` to the phone's WiFi address and set `USE_SYSTEM_DNS = False`. This proxy will route outgoing proxied traffic to the cell network even though the WiFi network has priority.
+    - You can also create an ad-hoc (computer-to-computer) network and connect all devices to that, if no ambient WiFi is available.
+
 # Running
 
 - Connect your devices to the same WiFi network as your phone. If there's no suitable network, you can create a computer-to-computer (ad-hoc) network using your laptop and connect to it with your phone.
