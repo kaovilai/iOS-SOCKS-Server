@@ -22,9 +22,24 @@ Typical modes of operation:
 - If you are using tethering, connect all clients to the hotspot and set PROXY_HOST = "172.20.10.1".
 - If you are connecting this phone and clients to some other WiFi network, set PROXY_HOST to this phone's address
   on that WiFi network and set USE_SYSTEM_DNS = False.
+
+IPv6 hotspot clients:
+- The server now listens on both IPv4 (0.0.0.0) and IPv6 (::) simultaneously (dual-stack).
+- On a hotspot client, configure the proxy using the phone's IPv6 link-local address, e.g.:
+    export https_proxy="http://[fe80::1%eth0]:9877"
+    export http_proxy="http://[fe80::1%eth0]:9877"
+    export ALL_PROXY="socks5://[fe80::1%eth0]:9876"
+  where fe80::1 is the phone's link-local address and eth0 is the client's hotspot interface name.
+- Alternatively, use the phone's hotspot IPv6 address (e.g. fd00::/8 prefix) shown by `ip addr` on the client:
+    export ALL_PROXY="socks5://[fd12:3456:789a::1]:9876"
+- On macOS/iOS clients, set the SOCKS proxy host to the bracketed IPv6 address in System Settings > Network > Proxies.
+- PROXY_HOST below is used only to print the suggested address in the startup log and to generate the WPAD/PAC URL;
+  it does not affect which address the server listens on. Set it to whichever address (IPv4 or IPv6) your clients
+  will use to reach this proxy.
 """
 
-# IP over which the proxy will be available (default: iOS tethering IP; set to a WiFi IP address if this will be accessed over WiFi)
+# IP over which the proxy will be available (default: iOS tethering IPv4; set to the phone's WiFi or hotspot address,
+# including an IPv6 address in brackets e.g. "[fe80::1]", if clients will connect over IPv6)
 PROXY_HOST = "172.20.10.1"
 # IP over which the proxy will attempt to connect to the Internet (will be autodetected from available networks)
 CONNECT_HOST_IPV4 = "0.0.0.0"
