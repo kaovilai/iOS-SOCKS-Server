@@ -112,19 +112,20 @@ else:
         resolver = None
 
 try:
-    # We want the WiFi address so that clients know what IP to use.
-    # We want the non-WiFi (cellular?) address so that we can force network
-    #  traffic to go over that network. This allows the proxy to correctly
-    #  forward traffic to the cell network even when the WiFi network is
-    #  internet-enabled but limited (e.g. firewalled)
+    # We want the WiFi/hotspot address so that clients know what IP to use.
+    # We want the non-WiFi (cellular/VPN) address so that we can force network
+    # traffic to go over that network. This allows the proxy to correctly
+    # forward traffic to the cell network even when the WiFi network is
+    # internet-enabled but limited (e.g. firewalled).
 
     from collections import defaultdict
 
     from lib import ifaddrs
 
-    initial_output = ""
-    ipv4_output = ""
-    ipv6_output = ""
+    # Lines appended to these sections are joined into the startup banner.
+    outbound_lines = []   # how outbound connections are made
+    client_lines = []     # what address/port clients should use
+    warning_lines = []    # non-fatal issues worth highlighting
 
     interfaces = ifaddrs.get_interfaces()
     iftypes = defaultdict(list)
@@ -145,12 +146,13 @@ try:
             iftypes["cell"].append(iface)
 
     if iftypes["vpn"] and USE_PHONE_VPN:
-        ipv4_output += "VPN use enabled (change with USE_PHONE_VPN)\n"
+        outbound_lines.append("VPN routing enabled (USE_PHONE_VPN=True)")
         new_ifaces = []
         new_ifaces.extend(iftypes["vpn"])
         new_ifaces.extend(iftypes["cell"])
         iftypes["cell"] = new_ifaces
 
+    # Determine the address clients should use to reach this proxy (PROXY_HOST).
     if iftypes["bridge"]:
         iface = next(
             (
@@ -161,27 +163,26 @@ try:
             None,
         )
         if iface:
-            initial_output = (
-                "Assuming proxy will be accessed over hotspot (%s) at %s\n"
-                % (iface.name, iface.addr.address)
-            )
             PROXY_HOST = iface.addr.address
+            client_lines.append(
+                "Client network : hotspot interface %s  →  %s" % (iface.name, iface.addr.address)
+            )
     elif iftypes["en"]:
         iface = next(
             (iface for iface in iftypes["en"] if iface.addr.family == socket.AF_INET),
             None,
         )
         if iface:
-            initial_output += (
-                "Assuming proxy will be accessed over WiFi (%s) at %s\n"
-                % (iface.name, iface.addr.address)
-            )
             PROXY_HOST = iface.addr.address
+            client_lines.append(
+                "Client network : WiFi interface %s  →  %s" % (iface.name, iface.addr.address)
+            )
     else:
-        initial_output += (
-            "Warning: could not get WiFi address; assuming %s\n" % PROXY_HOST
+        warning_lines.append(
+            "WARNING: Could not detect WiFi/hotspot address; using configured PROXY_HOST=%s" % PROXY_HOST
         )
 
+    # Determine outbound interfaces (cellular / VPN).
     if iftypes["cell"]:
         iface_ipv4 = next(
             (iface for iface in iftypes["cell"] if iface.addr.family == socket.AF_INET),
@@ -192,14 +193,13 @@ try:
         is_vpn = iface_ipv4 and iface_ipv4.name.startswith("utun")
 
         if iface_ipv4:
-            iface_ipv4.addr.address
-            ipv4_output += "Will connect to IPv4 servers over interface %s at %s\n" % (
-                iface_ipv4.name,
-                iface_ipv4.addr.address,
-            )
             CONNECT_HOST_IPV4 = iface_ipv4.addr.address
+            outbound_lines.append(
+                "Outbound IPv4   : interface %s  →  %s"
+                % (iface_ipv4.name, iface_ipv4.addr.address)
+            )
 
-            # Create a list of all IPv6 addresse that are globally routable and match the IPv4 interface
+            # Find globally-routable IPv6 address on the same interface.
             iface_ipv6_list = [
                 iface
                 for iface in iftypes["cell"]
@@ -208,12 +208,11 @@ try:
                 and (is_globally_routable(iface.addr.address) if not is_vpn else True)
                 and iface.name == iface_ipv4.name
             ]
-
-            # Select the last IPv6 address to select the temporary address for reduced tracking
+            # Prefer the last address (temporary/privacy address for reduced tracking).
             iface_ipv6 = iface_ipv6_list[-1] if iface_ipv6_list else None
 
         if iface_ipv6 is None and not is_vpn:
-            # Create a list of all IPv6 addresses that are globally routable
+            # Fall back to any globally-routable IPv6 address on any interface.
             iface_ipv6_list = [
                 iface
                 for iface in iftypes["cell"]
@@ -221,17 +220,10 @@ try:
                 and iface.addr.address
                 and is_globally_routable(iface.addr.address)
             ]
-
-            # Select the last IPv6 address to select the temporary address for reduced tracking
             iface_ipv6 = iface_ipv6_list[-1] if iface_ipv6_list else None
 
         if iface_ipv6:
-            iface_ipv6.addr.address
-            ipv6_output += "Will connect to IPv6 servers over interface %s at %s\n" % (
-                iface_ipv6.name,
-                iface_ipv6.addr.address,
-            )
-            # Test IPv6 connectivity
+            # Test IPv6 connectivity before committing to it.
             try:
                 test_socket = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
                 test_socket.settimeout(5)
@@ -239,17 +231,22 @@ try:
                 test_socket.connect(("2606:4700:4700::1111", 80))
                 test_socket.close()
                 CONNECT_HOST_IPV6 = iface_ipv6.addr.address
-            except Exception as e:
-                ipv6_output += (
-                    "Failed to connect to 2606:4700:4700::1111 over IPv6 due to: %s\n"
-                    % str(e)
+                outbound_lines.append(
+                    "Outbound IPv6   : interface %s  →  %s  (connectivity OK)"
+                    % (iface_ipv6.name, iface_ipv6.addr.address)
                 )
+            except Exception as e:
                 CONNECT_HOST_IPV6 = None
+                outbound_lines.append(
+                    "Outbound IPv6   : interface %s  →  %s  (connectivity FAILED: %s)"
+                    % (iface_ipv6.name, iface_ipv6.addr.address, e)
+                )
             finally:
                 test_socket.close()
+        else:
+            outbound_lines.append("Outbound IPv6   : not available")
 
-    initial_output += ipv4_output + ipv6_output
-    print(initial_output)
+    initial_output = ""
 except Exception as e:
     logging.error("Address detection failed: %s: %s", (type(e).__name__, e))
     import traceback
@@ -257,6 +254,10 @@ except Exception as e:
     traceback.print_exc()
 
     interfaces = None
+    outbound_lines = []
+    client_lines = []
+    warning_lines = []
+    initial_output = ""
 
 
 def create_wpad_server(hhost, hport, phost, pport):
@@ -311,13 +312,57 @@ if __name__ == "__main__":
 
     wpad_server = create_wpad_server("0.0.0.0", WPAD_PORT, PROXY_HOST, SOCKS_PORT)
 
-    initial_output += "PAC URL: http://{}:{}/wpad.dat\n".format(PROXY_HOST, WPAD_PORT)
-    initial_output += "SOCKS Address: {}:{}\n".format(
-        PROXY_HOST or "0.0.0.0", SOCKS_PORT
+    # ── Listening addresses ──────────────────────────────────────────────────
+    listen_section = [
+        "┌─ Listening (dual-stack) ──────────────────────────────────────────",
+        "│  IPv4  0.0.0.0       SOCKS5 port %d  │  HTTP port %d  │  WPAD port %d" % (SOCKS_PORT, HTTP_PORT, WPAD_PORT),
+        "│  IPv6  [::]          SOCKS5 port %d  │  HTTP port %d" % (SOCKS_PORT, HTTP_PORT),
+        "└───────────────────────────────────────────────────────────────────",
+    ]
+
+    # ── Outbound (how this device reaches the Internet) ──────────────────────
+    outbound_section = ["┌─ Outbound (this device → Internet) ───────────────────────────────"]
+    for line in (outbound_lines or ["│  (detection skipped)"]):
+        outbound_section.append("│  " + line)
+    outbound_section.append("└───────────────────────────────────────────────────────────────────")
+
+    # ── Client setup (how remote clients reach this proxy) ───────────────────
+    proxy_ipv4 = PROXY_HOST or "0.0.0.0"
+    # Format IPv6 address for URLs/proxy strings (wrap in brackets if it looks like an IPv6 addr).
+    proxy_ipv6 = "[%s]" % CONNECT_HOST_IPV6 if CONNECT_HOST_IPV6 else None
+
+    client_section = ["┌─ Client setup ────────────────────────────────────────────────────"]
+    for line in client_lines:
+        client_section.append("│  " + line)
+    client_section.append("│")
+    client_section.append("│  SOCKS5  (IPv4)  socks5://%s:%d" % (proxy_ipv4, SOCKS_PORT))
+    client_section.append("│  HTTP    (IPv4)  http://%s:%d" % (proxy_ipv4, HTTP_PORT))
+    client_section.append("│  PAC/WPAD        http://%s:%d/wpad.dat" % (proxy_ipv4, WPAD_PORT))
+    if proxy_ipv6:
+        client_section.append("│")
+        client_section.append("│  SOCKS5  (IPv6)  socks5://%s:%d" % (proxy_ipv6, SOCKS_PORT))
+        client_section.append("│  HTTP    (IPv6)  http://%s:%d" % (proxy_ipv6, HTTP_PORT))
+        client_section.append("│")
+        client_section.append("│  IPv6 shell env:")
+        client_section.append("│    export ALL_PROXY='socks5://%s:%d'" % (proxy_ipv6, SOCKS_PORT))
+        client_section.append("│    export http_proxy='http://%s:%d'" % (proxy_ipv6, HTTP_PORT))
+        client_section.append("│    export https_proxy='http://%s:%d'" % (proxy_ipv6, HTTP_PORT))
+    client_section.append("└───────────────────────────────────────────────────────────────────")
+
+    if warning_lines:
+        warn_section = ["┌─ Warnings ────────────────────────────────────────────────────────"]
+        for line in warning_lines:
+            warn_section.append("│  " + line)
+        warn_section.append("└───────────────────────────────────────────────────────────────────")
+    else:
+        warn_section = []
+
+    initial_output = "\n".join(
+        listen_section + [""] + outbound_section + [""] + client_section
+        + ([""] + warn_section if warn_section else [])
+        + [""]
     )
-    initial_output += "HTTP Proxy Address: {}:{}\n".format(
-        PROXY_HOST or "0.0.0.0", HTTP_PORT
-    )
+
     stats = StatusMonitor(initial_output)
     logging.getLogger().addHandler(stats)
 
