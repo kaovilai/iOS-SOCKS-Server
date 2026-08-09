@@ -126,6 +126,9 @@ try:
     outbound_lines = []   # how outbound connections are made
     client_lines = []     # what address/port clients should use
     warning_lines = []    # non-fatal issues worth highlighting
+    # All non-loopback addresses available for client connections, collected
+    # as (iface_name, address_family, address_string) tuples.
+    all_listen_addrs: list[tuple[str, int, str]] = []
 
     interfaces = ifaddrs.get_interfaces()
     iftypes = defaultdict(list)
@@ -144,6 +147,9 @@ try:
             iftypes["vpn"].append(iface)
         else:
             iftypes["cell"].append(iface)
+        # Collect all IPv4 and IPv6 addresses across every non-loopback interface.
+        if iface.addr.family in (socket.AF_INET, socket.AF_INET6) and iface.addr.address:
+            all_listen_addrs.append((iface.name, iface.addr.family, iface.addr.address))
 
     if iftypes["vpn"] and USE_PHONE_VPN:
         outbound_lines.append("VPN routing enabled (USE_PHONE_VPN=True)")
@@ -257,6 +263,7 @@ except Exception as e:
     outbound_lines = []
     client_lines = []
     warning_lines = []
+    all_listen_addrs = []
     initial_output = ""
 
 
@@ -327,26 +334,50 @@ if __name__ == "__main__":
     outbound_section.append("└───────────────────────────────────────────────────────────────────")
 
     # ── Client setup (how remote clients reach this proxy) ───────────────────
-    proxy_ipv4 = PROXY_HOST or "0.0.0.0"
-    # Format IPv6 address for URLs/proxy strings (wrap in brackets if it looks like an IPv6 addr).
-    proxy_ipv6 = "[%s]" % CONNECT_HOST_IPV6 if CONNECT_HOST_IPV6 else None
-
     client_section = ["┌─ Client setup ────────────────────────────────────────────────────"]
     for line in client_lines:
         client_section.append("│  " + line)
+
+    # Helper: format an address for use in a URL (IPv6 needs brackets).
+    def fmt_addr(af, addr):
+        return "[%s]" % addr if af == socket.AF_INET6 else addr
+
+    # Deduplicate while preserving order.
+    seen_addrs: set[tuple[int, str]] = set()
+    unique_listen_addrs: list[tuple[str, int, str]] = []
+    for iface_name, af, addr in all_listen_addrs:
+        key = (af, addr)
+        if key not in seen_addrs:
+            seen_addrs.add(key)
+            unique_listen_addrs.append((iface_name, af, addr))
+
+    if unique_listen_addrs:
+        client_section.append("│")
+        client_section.append("│  Shell env examples — pick the address reachable from your client:")
+        for iface_name, af, addr in unique_listen_addrs:
+            proto = "IPv4" if af == socket.AF_INET else "IPv6"
+            host = fmt_addr(af, addr)
+            client_section.append("│")
+            client_section.append("│  # %s  %s  (%s)" % (proto, addr, iface_name))
+            client_section.append("│    export ALL_PROXY='socks5://%s:%d'" % (host, SOCKS_PORT))
+            client_section.append("│    export http_proxy='http://%s:%d'" % (host, HTTP_PORT))
+            client_section.append("│    export https_proxy='http://%s:%d'" % (host, HTTP_PORT))
+    else:
+        # Fallback when ifaddrs is not available (non-iOS platforms).
+        proxy_ipv4 = PROXY_HOST or "0.0.0.0"
+        client_section.append("│")
+        client_section.append("│  SOCKS5  (IPv4)  socks5://%s:%d" % (proxy_ipv4, SOCKS_PORT))
+        client_section.append("│  HTTP    (IPv4)  http://%s:%d" % (proxy_ipv4, HTTP_PORT))
+        client_section.append("│  PAC/WPAD        http://%s:%d/wpad.dat" % (proxy_ipv4, WPAD_PORT))
+        if CONNECT_HOST_IPV6:
+            proxy_ipv6 = "[%s]" % CONNECT_HOST_IPV6
+            client_section.append("│")
+            client_section.append("│    export ALL_PROXY='socks5://%s:%d'" % (proxy_ipv6, SOCKS_PORT))
+            client_section.append("│    export http_proxy='http://%s:%d'" % (proxy_ipv6, HTTP_PORT))
+            client_section.append("│    export https_proxy='http://%s:%d'" % (proxy_ipv6, HTTP_PORT))
+
     client_section.append("│")
-    client_section.append("│  SOCKS5  (IPv4)  socks5://%s:%d" % (proxy_ipv4, SOCKS_PORT))
-    client_section.append("│  HTTP    (IPv4)  http://%s:%d" % (proxy_ipv4, HTTP_PORT))
-    client_section.append("│  PAC/WPAD        http://%s:%d/wpad.dat" % (proxy_ipv4, WPAD_PORT))
-    if proxy_ipv6:
-        client_section.append("│")
-        client_section.append("│  SOCKS5  (IPv6)  socks5://%s:%d" % (proxy_ipv6, SOCKS_PORT))
-        client_section.append("│  HTTP    (IPv6)  http://%s:%d" % (proxy_ipv6, HTTP_PORT))
-        client_section.append("│")
-        client_section.append("│  IPv6 shell env:")
-        client_section.append("│    export ALL_PROXY='socks5://%s:%d'" % (proxy_ipv6, SOCKS_PORT))
-        client_section.append("│    export http_proxy='http://%s:%d'" % (proxy_ipv6, HTTP_PORT))
-        client_section.append("│    export https_proxy='http://%s:%d'" % (proxy_ipv6, HTTP_PORT))
+    client_section.append("│  PAC/WPAD  http://%s:%d/wpad.dat" % (PROXY_HOST or "0.0.0.0", WPAD_PORT))
     client_section.append("└───────────────────────────────────────────────────────────────────")
 
     if warning_lines:
