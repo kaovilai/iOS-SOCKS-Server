@@ -31,8 +31,8 @@ CONNECT_HOST_IPV4 = "0.0.0.0"
 CONNECT_HOST_IPV6 = None
 # Time out connections after being idle for this long (in seconds)
 IDLE_TIMEOUT = 1800
-# Host to listen on - 0.0.0.0 to listen on all interfaces
-LISTEN_HOST = "0.0.0.0"
+# Hosts to listen on - dual-stack: both IPv6 (::) and IPv4 (0.0.0.0)
+LISTEN_HOSTS = ("::", "0.0.0.0")
 # Port numbers to listen on
 SOCKS_PORT = 9876 # SOCKS5 server
 HTTP_PORT = 9877 # HTTP Proxy server
@@ -294,14 +294,14 @@ def run_wpad_server(server):
 if __name__ == "__main__":
     import asyncio
 
-    wpad_server = create_wpad_server(LISTEN_HOST, WPAD_PORT, PROXY_HOST, SOCKS_PORT)
+    wpad_server = create_wpad_server("0.0.0.0", WPAD_PORT, PROXY_HOST, SOCKS_PORT)
 
     initial_output += "PAC URL: http://{}:{}/wpad.dat\n".format(PROXY_HOST, WPAD_PORT)
     initial_output += "SOCKS Address: {}:{}\n".format(
-        PROXY_HOST or LISTEN_HOST, SOCKS_PORT
+        PROXY_HOST or "0.0.0.0", SOCKS_PORT
     )
     initial_output += "HTTP Proxy Address: {}:{}\n".format(
-        PROXY_HOST or LISTEN_HOST, HTTP_PORT
+        PROXY_HOST or "0.0.0.0", HTTP_PORT
     )
     stats = StatusMonitor(initial_output)
     logging.getLogger().addHandler(stats)
@@ -313,7 +313,7 @@ if __name__ == "__main__":
     async def main():
         server = AsyncProxyServer(
             AsyncSocks5Handler,
-            listen_hosts=LISTEN_HOST,
+            listen_hosts=LISTEN_HOSTS,
             listen_port=SOCKS_PORT,
             traffic_stats=stats,
             resolver=resolver,
@@ -324,7 +324,7 @@ if __name__ == "__main__":
 
         server = AsyncProxyServer(
             AsyncHTTPProxyHandler,
-            listen_hosts=LISTEN_HOST,
+            listen_hosts=LISTEN_HOSTS,
             listen_port=HTTP_PORT,
             traffic_stats=stats,
             resolver=resolver,
