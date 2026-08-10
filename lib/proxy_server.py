@@ -1,6 +1,7 @@
 """ General base class for proxies """
 
 import asyncio
+import ipaddress
 import random
 import socket
 from asyncio.staggered import staggered_race
@@ -12,6 +13,10 @@ from . import status
 
 SocketAddress = tuple[str, int]
 Connection = tuple[asyncio.StreamReader, asyncio.StreamWriter]
+
+
+class DestinationNotAllowedError(Exception):
+    """Raised when a client requests a destination blocked by policy."""
 
 
 def af_by_address(domain: str) -> int | None:
@@ -26,6 +31,26 @@ def af_by_address(domain: str) -> int | None:
         return socket.AF_INET6
     except Exception:
         return None
+
+
+def looks_like_ip_literal(domain: str) -> bool:
+    # Malformed "looks like an IP" strings (e.g. "999.1.2.3") must never fall
+    # through to a DNS resolver: reject anything that is all dotted-numeric
+    # labels or contains a colon but failed strict inet_pton parsing.
+    if ":" in domain:
+        return True
+    labels = domain.split(".")
+    return bool(labels) and all(label.isdigit() for label in labels if label)
+
+
+def is_destination_allowed(address: str) -> bool:
+    # Only allow globally-routable destinations. This proxy is
+    # unauthenticated, so without this check any client could use it to reach
+    # loopback, the hotspot LAN, or carrier-internal (CGNAT) networks.
+    try:
+        return ipaddress.ip_address(address).is_global
+    except ValueError:
+        return False
 
 
 @dataclass
@@ -153,11 +178,13 @@ class AsyncProxyServer:
         resolver: Optional["dns.asyncresolver.Resolver"] = None,
         connect_host_ipv4: str | None = None,
         connect_host_ipv6: str | None = None,
+        allow_private_destinations: bool = False,
     ):
         self.handler_class = handler_class
         self.listen_hosts = listen_hosts
         self.listen_port = listen_port
         self.traffic_stats = traffic_stats or status.SimpleTrafficStats()
+        self.allow_private_destinations = allow_private_destinations
         self.resolver: DefaultAddressResolver | CustomSourceAddressResolver
         if resolver:
             self.resolver = CustomSourceAddressResolver(resolver, connect_host_ipv4, connect_host_ipv6)
@@ -244,6 +271,12 @@ class AsyncProxyServer:
             result.ipv6 = address
             return result
 
+        if looks_like_ip_literal(domain):
+            # Not a valid IP but shaped like one — never send it to a resolver.
+            raise DestinationNotAllowedError(
+                "Invalid IP literal %r rejected (would leak to DNS)" % domain
+            )
+
         if self.connect_host_ipv4 is None and self.connect_host_ipv6 is not None:
             ipv4_resolver = self.dummy_resolve()
         else:
@@ -279,5 +312,21 @@ class AsyncProxyServer:
             result.ipv4 = None
         elif self.connect_host_ipv4 is not None and self.connect_host_ipv6 is None:
             result.ipv6 = None
+
+        if not self.allow_private_destinations:
+            # Applied after resolution as well, so DNS answers pointing at
+            # private/loopback space (DNS rebinding) are also blocked.
+            blocked = []
+            if result.ipv4 is not None and not is_destination_allowed(result.ipv4[0]):
+                blocked.append(result.ipv4[0])
+                result.ipv4 = None
+            if result.ipv6 is not None and not is_destination_allowed(result.ipv6[0]):
+                blocked.append(result.ipv6[0])
+                result.ipv6 = None
+            if blocked and result.ipv4 is None and result.ipv6 is None:
+                raise DestinationNotAllowedError(
+                    "Destination %s (%s) is not globally routable; blocked by policy"
+                    % (address[0], ", ".join(blocked))
+                )
 
         return result
