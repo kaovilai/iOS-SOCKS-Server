@@ -138,18 +138,21 @@ try:
             continue
         if iface.name.startswith("lo"):
             continue
-        # XXX implement better classification of interfaces
         if iface.name.startswith("en"):
             iftypes["en"].append(iface)
         elif iface.name.startswith("bridge"):
             iftypes["bridge"].append(iface)
         elif iface.name.startswith("utun"):
             iftypes["vpn"].append(iface)
-        else:
+        elif iface.name.startswith("pdp_ip"):
             iftypes["cell"].append(iface)
+        # Ignore other iOS-internal interfaces (awdl, llw, ipsec, etc.)
         # Collect all IPv4 and IPv6 addresses across every non-loopback interface.
         if iface.addr.family in (socket.AF_INET, socket.AF_INET6) and iface.addr.address:
             all_listen_addrs.append((iface.name, iface.addr.family, iface.addr.address))
+
+    # Sort cellular interfaces so pdp_ip0 is preferred over pdp_ip1, pdp_ip2, etc.
+    iftypes["cell"].sort(key=lambda iface: iface.name)
 
     if iftypes["vpn"] and USE_PHONE_VPN:
         outbound_lines.append("VPN routing enabled (USE_PHONE_VPN=True)")
