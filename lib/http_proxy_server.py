@@ -10,6 +10,7 @@ from . import status
 from .proxy_server import (
     AsyncProxyHandler,
     AsyncProxyServer,
+    DestinationNotAllowedError,
     SocketAddress,
     Socks5AddressType,
 )
@@ -80,6 +81,9 @@ class AsyncHTTPProxyHandler(AsyncProxyHandler, BaseHTTPRequestHandler):
             connection = await self.server.tcp_connect(
                 Socks5AddressType.DOMAIN, address
             )
+        except DestinationNotAllowedError as e:
+            self.send_error(HTTPStatus.FORBIDDEN, "Destination not allowed: %s" % e)
+            return
         except Exception as e:
             self.send_error(
                 HTTPStatus.BAD_GATEWAY,
@@ -116,6 +120,9 @@ class AsyncHTTPProxyHandler(AsyncProxyHandler, BaseHTTPRequestHandler):
             connection = await self.server.tcp_connect(
                 Socks5AddressType.DOMAIN, address
             )
+        except DestinationNotAllowedError as e:
+            self.send_error(HTTPStatus.FORBIDDEN, "Destination not allowed: %s" % e)
+            return
         except Exception as e:
             self.send_error(
                 HTTPStatus.BAD_GATEWAY,

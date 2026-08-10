@@ -15,6 +15,7 @@ from . import status
 from .proxy_server import (
     AsyncProxyHandler,
     AsyncProxyServer,
+    DestinationNotAllowedError,
     SocketAddress,
     Socks5AddressType,
 )
@@ -268,6 +269,9 @@ class AsyncSocks5Handler(AsyncProxyHandler):
     async def handle_connect(self, address_type: int, address: SocketAddress) -> None:
         try:
             connection = await self.server.tcp_connect(address_type, address)
+        except DestinationNotAllowedError as e:
+            self.send_reply(Socks5Status.EPERM)
+            raise e
         except Exception as e:
             self.send_reply(Socks5Status.EHOSTUNREACH)
             raise e

@@ -58,6 +58,11 @@ USE_PHONE_VPN = True
 # via the VPN by default, we can trust the system DNS if using the phone VPN.
 USE_SYSTEM_DNS = USE_PHONE_VPN
 CUSTOM_RESOLVERS = []
+# The proxy is unauthenticated, so by default it refuses to connect to
+# private/loopback/link-local/carrier-internal destinations — otherwise any
+# client could use it to reach your hotspot LAN or the carrier's network.
+# Set to True only if you deliberately want to proxy into private ranges.
+ALLOW_PRIVATE_DESTINATIONS = False
 
 ## End of configuration
 
@@ -413,6 +418,7 @@ if __name__ == "__main__":
             resolver=resolver,
             connect_host_ipv4=CONNECT_HOST_IPV4,
             connect_host_ipv6=CONNECT_HOST_IPV6,
+            allow_private_destinations=ALLOW_PRIVATE_DESTINATIONS,
         )
         asyncio.create_task(server.run())
 
@@ -424,6 +430,7 @@ if __name__ == "__main__":
             resolver=resolver,
             connect_host_ipv4=CONNECT_HOST_IPV4,
             connect_host_ipv6=CONNECT_HOST_IPV6,
+            allow_private_destinations=ALLOW_PRIVATE_DESTINATIONS,
         )
         asyncio.create_task(server.run())
 
